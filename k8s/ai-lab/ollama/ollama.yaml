@@ -1,0 +1,191 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ollama-models
+  namespace: ai-lab
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: gp3
+  resources:
+    requests:
+      storage: 50Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ollama
+  namespace: ai-lab
+  labels:
+    app: ollama
+    version: v1
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: ollama
+  template:
+    metadata:
+      labels:
+        app: ollama
+        version: v1
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "11434"
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      
+      # Anti-affinity: spread across nodes
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - ollama
+              topologyKey: kubernetes.io/hostname
+      
+      # Init container to pre-load models
+      initContainers:
+      - name: model-loader
+        image: ollama/ollama:latest
+        command:
+        - /bin/sh
+        - -c
+        - |
+          ollama serve &
+          SERVER_PID=$!
+          
+          # Wait for server
+          sleep 15
+          
+          # Pull models
+          echo "Pulling tinyllama..."
+          ollama pull tinyllama
+          
+          echo "Pulling phi..."
+          ollama pull phi
+          
+          # Verify
+          ollama list
+          
+          # Cleanup
+          kill $SERVER_PID
+          wait $SERVER_PID
+          
+          echo "Models loaded successfully"
+        volumeMounts:
+        - name: ollama-data
+          mountPath: /root/.ollama
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "2Gi"
+          limits:
+            cpu: "1000m"
+            memory: "4Gi"
+      
+      containers:
+      - name: ollama
+        image: ollama/ollama:latest
+        command: ["ollama", "serve"]
+        
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: false
+        
+        resources:
+          requests:
+            cpu: "1000m"
+            memory: "3Gi"
+          limits:
+            cpu: "2000m"
+            memory: "4Gi"
+        
+        ports:
+        - name: http
+          containerPort: 11434
+          protocol: TCP
+        
+        livenessProbe:
+          httpGet:
+            path: /api/tags
+            port: 11434
+          initialDelaySeconds: 90
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        
+        readinessProbe:
+          httpGet:
+            path: /api/tags
+            port: 11434
+          initialDelaySeconds: 60
+          periodSeconds: 10
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
+        
+        env:
+        - name: OLLAMA_HOST
+          value: "0.0.0.0:11434"
+        - name: OLLAMA_MODELS
+          value: "/root/.ollama/models"
+        
+        volumeMounts:
+        - name: ollama-data
+          mountPath: /root/.ollama
+      
+      volumes:
+      - name: ollama-data
+        persistentVolumeClaim:
+          claimName: ollama-models
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollama
+  namespace: ai-lab
+  labels:
+    app: ollama
+spec:
+  type: ClusterIP
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 3600
+  selector:
+    app: ollama
+  ports:
+  - name: http
+    port: 11434
+    targetPort: 11434
+    protocol: TCP
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: ollama-pdb
+  namespace: ai-lab
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: ollama

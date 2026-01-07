@@ -1,0 +1,39 @@
+# AWS Configuration
+aws_region     = "us-east-1"
+project_name   = "ai-lab"
+environment    = "demo"
+
+# IMPORTANT: Change this to your university/department IP range for security
+# Example: "203.0.113.0/24" or get your IP with: curl ifconfig.me
+cluster_endpoint_public_access_cidrs = ["0.0.0.0/0"]  # CHANGE THIS!
+
+# Network Configuration
+availability_zone    = "us-east-1a"
+vpc_cidr            = "10.0.0.0/16"
+public_subnet_cidr  = "10.0.1.0/24"
+private_subnet_cidr = "10.0.10.0/26"  # Limited IPs for cost efficiency
+
+# EKS Cluster Configuration
+cluster_name    = "ai-lab-eks"
+cluster_version = "1.28"
+
+# EC2 Node Configuration
+node_instance_types = ["t3.medium", "t3a.medium"]
+node_desired_size   = 3
+node_min_size       = 2
+node_max_size       = 5
+node_disk_size      = 30
+
+# Cost Optimization
+use_spot_instances = true  # 60-70% cost savings
+
+# Features
+enable_nat_gateway   = true
+enable_vpc_endpoints = true  # Reduces NAT costs
+enable_flow_logs     = true  # Security and compliance
+
+# Tags (optional - will be merged with default tags)
+tags = {
+  Department = "Computer Engineering"
+  Purpose    = "Student AI Lab"
+}
